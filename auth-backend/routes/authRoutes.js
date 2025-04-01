@@ -1,51 +1,39 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-require('dotenv').config();
-
+const express = require("express");
+const pool = require("./db");
 const router = express.Router();
+const bcrypt = require("bcrypt");
 
-// Signup Route
-router.post('/signup', async (req, res) => {
-    try {
-        const { fullName, email, phoneNumber, barID, state, role, password } = req.body;
-        let user = await User.findOne({ email });
+// User Signup
+router.post("/signup", async (req, res) => {
+  const { full_name, email, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
 
-        if (user) return res.status(400).json({ message: "User already exists" });
-
-        user = new User({ fullName, email, phoneNumber, barID, state, role, password });
-        await user.save();
-
-        res.status(201).json({ message: "User registered successfully" });
-    } catch (error) {
-        res.status(500).json({ message: "Server Error" });
-    }
+  try {
+    const result = await pool.query(
+      "INSERT INTO users (full_name, email, password) VALUES ($1, $2, $3) RETURNING *",
+      [full_name, email, hashedPassword]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: "Signup failed" });
+  }
 });
 
-// Login Route
-router.post('/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
-        const user = await User.findOne({ email });
+// User Login
+router.post("/login", async (req, res) => {
+  const { email, password } = req.body;
 
-        if (!user || !(await bcrypt.compare(password, user.password))) {
-            return res.status(401).json({ message: "Invalid credentials" });
-        }
+  try {
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (result.rows.length === 0) return res.status(400).json({ error: "User not found" });
 
-        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-        res.cookie('token', token, { httpOnly: true });
+    const isValid = await bcrypt.compare(password, result.rows[0].password);
+    if (!isValid) return res.status(401).json({ error: "Invalid credentials" });
 
-        res.json({ message: "Login successful", token });
-    } catch (error) {
-        res.status(500).json({ message: "Server Error" });
-    }
-});
-
-// Logout Route
-router.post('/logout', (req, res) => {
-    res.cookie('token', '', { expires: new Date(0) });
-    res.json({ message: "Logged out successfully" });
+    res.json({ message: "Login successful", user: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: "Login failed" });
+  }
 });
 
 module.exports = router;
